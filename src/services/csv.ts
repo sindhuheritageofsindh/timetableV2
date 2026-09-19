@@ -1,5 +1,56 @@
-export function downloadCsv(filename:string, rows:Record<string,unknown>[]) {
- const headers=rows.length?Object.keys(rows[0]):[]; const esc=(v:unknown)=>`"${String(v??'').replace(/"/g,'""')}"`; const csv=[headers.map(esc).join(','),...rows.map(r=>headers.map(h=>esc(r[h])).join(','))].join('\n')
- const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url)
+export function downloadCsv<T extends object>(filename: string, rows: readonly T[]) {
+  const objectRows = rows as readonly Record<string, unknown>[]
+  const headers = objectRows.length ? Object.keys(objectRows[0]) : []
+  const esc = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
+  const csv = [
+    headers.map(esc).join(','),
+    ...objectRows.map(row => headers.map(header => esc(row[header])).join(',')),
+  ].join('\n')
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
-export function parseCsv(text:string):Record<string,string>[] { const lines=text.split(/\r?\n/).filter(Boolean); if(!lines.length)return[]; const parse=(line:string)=>{const out:string[]=[];let cur='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;continue}if(ch==='"'){q=!q;continue}if(ch===','&&!q){out.push(cur.trim());cur='';continue}cur+=ch}out.push(cur.trim());return out}; const h=parse(lines[0]);return lines.slice(1).map(l=>{const vals=parse(l);return Object.fromEntries(h.map((x,i)=>[x,vals[i]??'']))}) }
+
+export function parseCsv(text: string): Record<string, string>[] {
+  const lines = text.split(/\r?\n/).filter(Boolean)
+  if (!lines.length) return []
+
+  const parse = (line: string) => {
+    const out: string[] = []
+    let current = ''
+    let quoted = false
+
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i]
+      if (char === '"' && line[i + 1] === '"') {
+        current += '"'
+        i += 1
+        continue
+      }
+      if (char === '"') {
+        quoted = !quoted
+        continue
+      }
+      if (char === ',' && !quoted) {
+        out.push(current.trim())
+        current = ''
+        continue
+      }
+      current += char
+    }
+
+    out.push(current.trim())
+    return out
+  }
+
+  const headers = parse(lines[0])
+  return lines.slice(1).map(line => {
+    const values = parse(line)
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? '']))
+  })
+}

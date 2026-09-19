@@ -5,7 +5,7 @@ import { buildSchoolWideValidation } from '@/engine/validator'
 
 export function SchoolWideValidationPage() {
   const { data } = useApp()
-  const latest = data.timetables.at(-1)
+  const latest = data.timetables[data.timetables.length - 1]
   const entries = latest ? data.entries.filter(e => e.timetableId === latest.id) : []
   const report = useMemo(() => buildSchoolWideValidation(entries, data), [entries, data])
   const s = report.summary

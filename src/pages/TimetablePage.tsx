@@ -11,7 +11,7 @@ export function TimetablePage() {
   const [view, setView] = useState<'class' | 'teacher' | 'master'>('class')
   const [selectedClass, setSelectedClass] = useState(data.classes[0]?.id || '')
   const [selectedTeacher, setSelectedTeacher] = useState(data.teachers[0]?.id || '')
-  const latest = data.timetables.at(-1)
+  const latest = data.timetables[data.timetables.length - 1]
   const entries = latest ? data.entries.filter(e => e.timetableId === latest.id) : []
   const validation = validateEntries(entries, data)
   const displayEntries = useMemo(

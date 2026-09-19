@@ -12,10 +12,10 @@ permissions:
 jobs:
   windows-installers:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -23,45 +23,175 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install app dependencies
+      - name: Locate timetable project
         shell: pwsh
         run: |
-          if (Test-Path '.\package-lock.json') {
-            Write-Host 'package-lock.json found -> using npm ci'
-            npm ci --no-audit --no-fund
-          } else {
-            Write-Warning 'package-lock.json is missing -> falling back to npm install'
-            npm install --no-audit --no-fund
+          $ErrorActionPreference = 'Stop'
+          $repo = (Resolve-Path $env:GITHUB_WORKSPACE).Path
+
+          $candidates = @(
+            Get-ChildItem -Path $repo -Filter 'package.json' -File -Recurse |
+              Where-Object {
+                $_.FullName -notmatch '[\\/]node_modules[\\/]' -and
+                (Test-Path (Join-Path $_.DirectoryName 'vite.config.ts')) -and
+                (Test-Path (Join-Path $_.DirectoryName 'electron-builder.yml')) -and
+                (Test-Path (Join-Path $_.DirectoryName 'desktop\main.cjs')) -and
+                (Test-Path (Join-Path $_.DirectoryName 'src'))
+              }
+          )
+
+          if ($candidates.Count -eq 0) {
+            Write-Host 'Repository files near the root:'
+            Get-ChildItem -Path $repo -Force -Depth 3 | Select-Object FullName
+            throw 'Could not find the timetable project. Expected package.json + vite.config.ts + electron-builder.yml + desktop/main.cjs + src/ in the same directory.'
           }
 
-      - name: Type-check and build renderer
+          $project = $candidates | Sort-Object { $_.DirectoryName.Length } | Select-Object -First 1
+          $appDir = $project.DirectoryName
+          Write-Host "Timetable project found at: $appDir"
+          "APP_DIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate build files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:APP_DIR
+
+          $required = @(
+            'package.json',
+            'vite.config.ts',
+            'electron-builder.yml',
+            'desktop\package.json',
+            'desktop\main.cjs',
+            'desktop\icon.ico',
+            'src\main.tsx',
+            'src\styles.css',
+            'src\vite-env.d.ts',
+            'tsconfig.json',
+            'tsconfig.app.json',
+            'tsconfig.node.json'
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Required build file is missing: $file" }
+          }
+
+          node --version
+          npm --version
+          node --check .\desktop\main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'desktop/main.cjs failed Node syntax validation.' }
+
+          $pkg = Get-Content .\package.json -Raw | ConvertFrom-Json
+          Write-Host "Building $($pkg.name) version $($pkg.version)"
+
+      - name: Install application dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:APP_DIR
+
+          # Hosted runners are clean, but removing a stale folder makes reruns deterministic.
+          if (Test-Path '.\node_modules') {
+            Remove-Item '.\node_modules' -Recurse -Force
+          }
+
+          if (Test-Path '.\package-lock.json') {
+            Write-Host 'package-lock.json found -> using reproducible npm ci'
+            npm ci --include=optional --no-audit --no-fund
+          } else {
+            Write-Warning 'package-lock.json is missing -> using npm install and generating one for this run'
+            npm install --include=optional --no-audit --no-fund
+          }
+
+          if ($LASTEXITCODE -ne 0) { throw 'Application dependency installation failed.' }
+
+      - name: Build renderer
+        shell: pwsh
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: npm run build
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:APP_DIR
 
-      - name: Stage renderer for desktop packaging
+          $hasUrl = -not [string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_URL)
+          $hasKey = (-not [string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_ANON_KEY)) -or (-not [string]::IsNullOrWhiteSpace($env:VITE_SUPABASE_PUBLISHABLE_KEY))
+          if ($hasUrl -xor $hasKey) {
+            throw 'Supabase is only partially configured. Set VITE_SUPABASE_URL plus either VITE_SUPABASE_ANON_KEY or VITE_SUPABASE_PUBLISHABLE_KEY, or leave all of them unset for local mode.'
+          }
+          if (-not $hasUrl -and -not $hasKey) {
+            Write-Warning 'No Supabase GitHub secrets were supplied. The app will still build, but will use local mode unless a checked-in .env provides valid values.'
+          }
+
+          Write-Host 'Running TypeScript project validation...'
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript validation failed.' }
+
+          Write-Host 'Building Vite renderer...'
+          npm run build:renderer
+          if ($LASTEXITCODE -ne 0) { throw 'Renderer build failed.' }
+          if (-not (Test-Path '.\dist\index.html')) { throw 'Vite completed without creating dist/index.html.' }
+
+      - name: Stage renderer for Electron
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:APP_DIR
           if (Test-Path '.\desktop\dist') { Remove-Item '.\desktop\dist' -Recurse -Force }
           Copy-Item '.\dist' '.\desktop\dist' -Recurse -Force
+          if (-not (Test-Path '.\desktop\dist\index.html')) { throw 'desktop/dist/index.html was not staged correctly.' }
 
-      - name: Install pinned desktop packager
-        run: npm install --no-save --package-lock=false --no-audit --no-fund electron-builder@26.16.1
+      - name: Build EXE and MSI
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:APP_DIR
 
-      - name: Build EXE + MSI
-        run: npx electron-builder --config electron-builder.yml --win --x64
+          # Pinned builder version; npx keeps package.json/package-lock.json unchanged.
+          npx --yes electron-builder@26.16.1 --config electron-builder.yml --win --x64
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
 
-      - name: Show generated installers
+          $exe = @(Get-ChildItem '.\release\*.exe' -File -ErrorAction SilentlyContinue)
+          $msi = @(Get-ChildItem '.\release\*.msi' -File -ErrorAction SilentlyContinue)
+          if ($exe.Count -lt 1) { throw 'Packaging finished but no EXE installer was produced.' }
+          if ($msi.Count -lt 1) { throw 'Packaging finished but no MSI installer was produced.' }
+
+      - name: Prepare verified artifacts
         shell: pwsh
         run: |
-          Get-ChildItem '.\release\*.exe', '.\release\*.msi' | Select-Object Name, Length, FullName
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:GITHUB_WORKSPACE '_windows_installers'
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          New-Item -ItemType Directory -Path $out | Out-Null
+
+          Copy-Item (Join-Path $env:APP_DIR 'release\*.exe') $out -Force
+          Copy-Item (Join-Path $env:APP_DIR 'release\*.msi') $out -Force
+
+          $files = Get-ChildItem $out -File
+          $files | Select-Object Name, Length, FullName
+          $files | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content (Join-Path $out 'SHA256SUMS.txt')
 
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4
         with:
           name: timetable-windows-installers
           if-no-files-found: error
+          retention-days: 14
           path: |
-            release/*.exe
-            release/*.msi
+            _windows_installers/*.exe
+            _windows_installers/*.msi
+            _windows_installers/SHA256SUMS.txt
+
+      - name: Print diagnostics if build fails
+        if: failure()
+        shell: pwsh
+        run: |
+          Write-Host "Detected APP_DIR: $env:APP_DIR"
+          Write-Host 'Repository layout (max depth 3):'
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Force -Depth 3 -ErrorAction SilentlyContinue |
+            Select-Object FullName

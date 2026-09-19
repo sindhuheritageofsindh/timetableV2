@@ -69,7 +69,8 @@ export async function loadSchoolData(): Promise<Dataset | null> {
     if (secondError) throw secondError
 
     let entries: any[] = []
-    const latest = timetablesResult.data?.at(-1)
+    const timetableRows = timetablesResult.data ?? []
+    const latest = timetableRows[timetableRows.length - 1]
     if (latest) {
       const entryResult = await supabase.from('timetable_entries').select('*').eq('timetable_id', latest.id)
       if (entryResult.error) throw entryResult.error

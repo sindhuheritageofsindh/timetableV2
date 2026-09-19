@@ -9,7 +9,7 @@ export function Rules() {
   const [teacher, setTeacher] = useState(data.teachers[0]?.id || '')
   const [day, setDay] = useState(data.settings.workingDays[0])
   const [period, setPeriod] = useState(1)
-  const latest = data.timetables.at(-1)
+  const latest = data.timetables[data.timetables.length - 1]
   const entries = latest ? data.entries.filter(e => e.timetableId === latest.id) : []
   const timetableValidation = useMemo(() => validateEntries(entries, data), [entries, data])
   const row = data.availability.find(a => a.teacherId === teacher && a.day === day && a.period === period)
