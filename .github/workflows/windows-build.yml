@@ -150,14 +150,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Set-Location $env:APP_DIR
 
-          # Pinned builder version; npx keeps package.json/package-lock.json unchanged.
-          npx --yes electron-builder@26.16.1 --config electron-builder.yml --win --x64
+          # Never publish from electron-builder. GitHub Actions uploads the installers as
+          # workflow artifacts in the next step, so no GH_TOKEN is required.
+          if (Test-Path '.\release') { Remove-Item '.\release' -Recurse -Force }
+          npx --yes electron-builder@26.16.1 --config electron-builder.yml --win --x64 --publish never
           if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
 
-          $exe = @(Get-ChildItem '.\release\*.exe' -File -ErrorAction SilentlyContinue)
-          $msi = @(Get-ChildItem '.\release\*.msi' -File -ErrorAction SilentlyContinue)
-          if ($exe.Count -lt 1) { throw 'Packaging finished but no EXE installer was produced.' }
-          if ($msi.Count -lt 1) { throw 'Packaging finished but no MSI installer was produced.' }
+          $pkg = Get-Content '.\desktop\package.json' -Raw | ConvertFrom-Json
+          $expectedExe = ".\release\Timetable-$($pkg.version)-x64.exe"
+          $expectedMsi = ".\release\Timetable-$($pkg.version)-x64.msi"
+          if (-not (Test-Path $expectedExe)) { throw "Packaging finished but the expected EXE installer was not produced: $expectedExe" }
+          if (-not (Test-Path $expectedMsi)) { throw "Packaging finished but the expected MSI installer was not produced: $expectedMsi" }
+          Write-Host "Verified installer: $expectedExe"
+          Write-Host "Verified installer: $expectedMsi"
 
       - name: Prepare verified artifacts
         shell: pwsh

@@ -54,13 +54,17 @@ if ($LASTEXITCODE -ne 0) { throw 'electron-builder installation failed.' }
 
 Write-Host '==> Building Windows x64 NSIS (.exe) and MSI installers with Electron 44.4.3'
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
-npx electron-builder --config electron-builder.yml --win --x64
+if (Test-Path '.\release') { Remove-Item '.\release' -Recurse -Force }
+# Explicitly disable electron-builder publishing. This build only creates local artifacts
+# and therefore never requires GH_TOKEN or a GitHub release.
+npx electron-builder --config electron-builder.yml --win --x64 --publish never
 if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed.' }
 
-$exe = @(Get-ChildItem '.\release\*.exe' -File -ErrorAction SilentlyContinue)
-$msi = @(Get-ChildItem '.\release\*.msi' -File -ErrorAction SilentlyContinue)
-if ($exe.Count -lt 1) { throw 'Packaging finished but no EXE installer was produced.' }
-if ($msi.Count -lt 1) { throw 'Packaging finished but no MSI installer was produced.' }
+$pkg = Get-Content '.\desktop\package.json' -Raw | ConvertFrom-Json
+$expectedExe = ".\release\Timetable-$($pkg.version)-x64.exe"
+$expectedMsi = ".\release\Timetable-$($pkg.version)-x64.msi"
+if (-not (Test-Path $expectedExe)) { throw "Packaging finished but the expected EXE installer was not produced: $expectedExe" }
+if (-not (Test-Path $expectedMsi)) { throw "Packaging finished but the expected MSI installer was not produced: $expectedMsi" }
 
 Write-Host '==> Installers created under .\release\'
-Get-ChildItem '.\release\*.exe', '.\release\*.msi' -ErrorAction Stop | Select-Object FullName, Length
+Get-Item $expectedExe, $expectedMsi | Select-Object FullName, Length
