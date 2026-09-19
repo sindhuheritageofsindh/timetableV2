@@ -1,0 +1,39 @@
+appId: com.timetable.desktop
+productName: Timetable
+copyright: Copyright © 2026
+electronVersion: 44.4.3
+asar: true
+npmRebuild: false
+compression: maximum
+directories:
+  app: desktop
+  output: release
+files:
+  - dist/**/*
+  - main.cjs
+  - icon.ico
+  - package.json
+win:
+  icon: desktop/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: msi
+      arch:
+        - x64
+  artifactName: Timetable-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Timetable
+  deleteAppDataOnUninstall: false
+msi:
+  oneClick: false
+  perMachine: false
+  upgradeCode: "{7CFC0128-0D30-4F7E-9F60-A1F506B14E8D}"
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

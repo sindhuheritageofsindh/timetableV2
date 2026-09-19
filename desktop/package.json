@@ -1,0 +1,7 @@
+{
+  "name": "timetable-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Timetable desktop application",
+  "main": "main.cjs"
+}

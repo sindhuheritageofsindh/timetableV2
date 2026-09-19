@@ -1,0 +1,67 @@
+name: Build Windows Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installers:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install app dependencies
+        shell: pwsh
+        run: |
+          if (Test-Path '.\package-lock.json') {
+            Write-Host 'package-lock.json found -> using npm ci'
+            npm ci --no-audit --no-fund
+          } else {
+            Write-Warning 'package-lock.json is missing -> falling back to npm install'
+            npm install --no-audit --no-fund
+          }
+
+      - name: Type-check and build renderer
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      - name: Stage renderer for desktop packaging
+        shell: pwsh
+        run: |
+          if (Test-Path '.\desktop\dist') { Remove-Item '.\desktop\dist' -Recurse -Force }
+          Copy-Item '.\dist' '.\desktop\dist' -Recurse -Force
+
+      - name: Install pinned desktop packager
+        run: npm install --no-save --package-lock=false --no-audit --no-fund electron-builder@26.16.1
+
+      - name: Build EXE + MSI
+        run: npx electron-builder --config electron-builder.yml --win --x64
+
+      - name: Show generated installers
+        shell: pwsh
+        run: |
+          Get-ChildItem '.\release\*.exe', '.\release\*.msi' | Select-Object Name, Length, FullName
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: timetable-windows-installers
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.msi
